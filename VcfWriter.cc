@@ -469,7 +469,7 @@ bool VcfWriter::print_snp_buffer(int32_t var_pos,float _read_pos)
  */
 bool VcfWriter::print_indel_buffer(int32_t var_pos,float _read_pos)
 {
-    //std::cerr<<"==========InDel start====================\n";
+    //std::cerr<<"==========InDel start:"<<std::to_string(var_pos)<<"====================\n";
     char refbase;
     double p_value, var_ratio, ref_ratio;
     float tmpf, near_read_end_ratio;
@@ -504,12 +504,14 @@ bool VcfWriter::print_indel_buffer(int32_t var_pos,float _read_pos)
     }
 
     rr_cov = _coverages->get_coverage(var_start, COVSIDX_DP);
+    int tmp_total_cov = _coverages->get_coverage(var_start, COVSIDX_ALL);
     if (!called_indel._isdel) rr_cov = (rr_cov > ar_cov ) ? (rr_cov - ar_cov) : 0;
     total_coverage = ar_cov + rr_cov;
 
     bcf_clear1(_vcf_rec);
     //bcf_update_filter(_vcf_hdr, _vcf_rec, &_pass_int, 1);
 
+    //std::cerr<<"indel pos:"<<std::to_string(var_start)<<",total_coverage:"<<std::to_string(total_coverage)<<",tmp_total_cov:"<<std::to_string(tmp_total_cov)<<std::endl;
     //set filter
     bool filter_flag = true;
     bool _het_flag = false;
@@ -521,7 +523,7 @@ bool VcfWriter::print_indel_buffer(int32_t var_pos,float _read_pos)
     }else{
         var_ratio = (double)called_indel_read_count / (double)total_coverage;
         ref_ratio = (double) rr_cov / (double)total_coverage;
-        if ( var_ratio <= _opts->indel_het_min) {
+        if ( total_coverage< _opts->min_site_dp || total_coverage<0.05 * tmp_total_cov || var_ratio <= _opts->indel_het_min) {
             gt_arr[0] = bcf_gt_unphased(0);
             gt_arr[1] = bcf_gt_unphased(0);
         } else {
@@ -747,67 +749,72 @@ void VcfWriter::print_variant_buffer(std::string chr, int32_t chr_len){
     for(int32_t i=0; i<chr_len; ++i){
         //std::cerr<<"Pos: "<<std::to_string(i)<<std::endl;
         bool var_flag = false;
-        if (_opts->all_variant ){
-            if( _events->_indels.find(i+1) != _events->_indels.end()  ){
-                var_flag = print_indel_buffer(i+1, _events->_read_pos[i]);
-                if (bcf_write1(_vcf_fp, _vcf_hdr, _vcf_rec)) {
-                    std::cerr << "Failed to write InDel record in site: " <<std::to_string(i)<<std::endl;
-                    exit(EXIT_FAILURE);
+        float indel_rate, snp_rate, snp1_rate;
+        int indel_dp, snp_dp, snp1_dp, var_cov, rr_cov;
+        bool is_del=false;
+        indel_rate=0.0;snp_rate=0.0;snp1_rate=0.0;
+        indel_dp=0; snp_dp=0; snp1_dp=0;var_cov=0;rr_cov=0;
+
+        if( _events->_indels.find(i+1) != _events->_indels.end() ){
+            IndelMap::iterator iv_it = _events->_indels.find(i+1);
+            var_cov = 0;
+            auto ivg_it = iv_it->second.begin();
+            IndelEvent *called_indel_ptr = &ivg_it->second;
+            while (ivg_it != iv_it->second.end()) {
+                if (ivg_it->second._read_count > var_cov) {
+                    called_indel_ptr = &ivg_it->second;
+                    var_cov = called_indel_ptr->_read_count;
                 }
-                var_flag = true;
+                ++ivg_it;
             }
-            if( _events->_snps.find(i) != _events->_snps.end() ){
-                var_flag = print_snp_buffer(i,_events->_read_pos[i]);
-                if (bcf_write1(_vcf_fp, _vcf_hdr, _vcf_rec)) {
-                    std::cerr << "Failed to write SNP record in site: " <<std::to_string(i)<<std::endl;
-                    exit(EXIT_FAILURE);
-                }
-                var_flag = true;
+            IndelEvent &called_indel = *called_indel_ptr;
+            if( called_indel._isdel ) is_del = true;
+            rr_cov = (is_del) ? _coverages->get_coverage(i+1, COVSIDX_DP) : _coverages->get_coverage(i, COVSIDX_DP);
+            indel_dp = var_cov + rr_cov;
+            indel_rate = (float)var_cov / (float) indel_dp;
+        }
+        if( _events->_snps.find(i) != _events->_snps.end() ){
+            SnpMap::iterator sv_it = _events->_snps.find(i);
+            rr_cov = _coverages->get_coverage(sv_it->first, COVSIDX_DP);
+            var_cov = 0;
+            for (auto &allele_it : sv_it->second) {
+                if( var_cov < allele_it.second._read_count) var_cov = allele_it.second._read_count;
             }
-            if( !var_flag ){
+            snp_dp = rr_cov + var_cov;
+            snp_rate = (float) var_cov / (float) snp_dp;
+        }
+        if( _events->_snps.find(i+1) != _events->_snps.end() ){
+            SnpMap::iterator sv_it = _events->_snps.find(i+1);
+            rr_cov = _coverages->get_coverage(sv_it->first, COVSIDX_DP);
+            var_cov = 0;
+            for (auto &allele_it : sv_it->second) {
+                if( var_cov < allele_it.second._read_count) var_cov = allele_it.second._read_count;
+            }
+            snp1_dp = rr_cov + var_cov;
+            snp1_rate = (float) var_cov / (float) snp1_dp;
+        }
+        //if (i == 3105 || i== 3106 ){
+        //    print_novar_buffer(i);
+        if( i == 3106 ){ // pos: 3107
+            print_novar_buffer(i);
+        }else if( snp_dp > 100 && snp_rate >0.0 && snp_rate > indel_rate ){
+            var_flag = print_snp_buffer(i, _events->_read_pos[i]);
+            if( !var_flag ) print_novar_buffer(i);
+        }else if( indel_dp > 100 && indel_rate >0.0 && indel_rate > snp_rate ){
+            if( snp1_dp >100 && snp1_rate > indel_rate ){
                 print_novar_buffer(i);
-                if (bcf_write1(_vcf_fp, _vcf_hdr, _vcf_rec)) {
-                    std::cerr << "Failed to write SNP record in site: " <<std::to_string(i)<<std::endl;
-                    exit(EXIT_FAILURE);
-                }
+            }else{
+                if( is_del ) var_flag = print_indel_buffer(i+1,_events->_read_pos[i+1]);
+                else  var_flag = print_indel_buffer(i+1,_events->_read_pos[i]);
+                if( !var_flag ) print_novar_buffer(i);
             }
         }else{
-            if (i == 3105 || i== 3106 ){
-                print_novar_buffer(i);
-            }else if( _events->_indels.find(i+1) != _events->_indels.end() ){
-                var_flag = print_indel_buffer(i+1,_events->_read_pos[i]);
-                //int ndp_arr = 0;
-                //int total_dp=0;
-                //int32_t *dp_arr = NULL;
-                //if( bcf_get_info_int32(_vcf_hdr, _vcf_rec, "DP", &dp_arr, &ndp_arr) > 0 ){
-                //    int total_dp = *((int32_t*)dp_arr);
-                //}
-                //if( total_dp < _opts->min_site_dp && _events->_snps.find(i) != _events->_snps.end()){
-                //        var_flag = print_snp_buffer(i);
-                //}else
-                if( var_flag &&  _events->_snps.find(i) != _events->_snps.end() ){
-                    bool var_flag_snp = print_snp_buffer(i,_events->_read_pos[i]);
-                    if( !var_flag_snp ){
-                        var_flag = print_indel_buffer(i+1,_events->_read_pos[i]);
-                    }
-                }else if( !var_flag && _events->_snps.find(i) != _events->_snps.end() ){
-                    var_flag = print_snp_buffer(i,_events->_read_pos[i]);
-                    if( !var_flag ){
-                        print_novar_buffer(i);
-                    }
-                }
-            }else if( _events->_snps.find(i) != _events->_snps.end() ){
-                var_flag = print_snp_buffer(i,_events->_read_pos[i]);
-                if( !var_flag ){
-                    print_novar_buffer(i);
-                }
-            } else {
-                print_novar_buffer(i);
-            }
-            if (bcf_write1(_vcf_fp, _vcf_hdr, _vcf_rec)) {
-                std::cerr << "Failed to write VCF record in site: " <<std::to_string(i)<<std::endl;
-                exit(EXIT_FAILURE);
-            }
+            print_novar_buffer(i);
+        }
+
+        if (bcf_write1(_vcf_fp, _vcf_hdr, _vcf_rec)) {
+            std::cerr << "Failed to write VCF record in site: " <<std::to_string(i)<<std::endl;
+            exit(EXIT_FAILURE);
         }
     }
 }

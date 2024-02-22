@@ -28,6 +28,7 @@ Required arguments:\n\
     -i, --in IN             Sorted and indexed input BAM or CRAM file\n\
     -s, --sample SN         Sample name to use in the output VCF file\n\
     -o, --outdir DIR        Output directory\n\
+    -t, --type STR          Sequencing Type, fwd, rev or unknown, [rev]\n\
 \n\
 Options:\n\
     -k, --rlen INT           The reads length [100]\n\
@@ -64,6 +65,7 @@ int mtVariant_main(int argc, char **argv)
     char *sample_name = nullptr;
     char *primer_fn = nullptr;
     char *out_bam = nullptr;
+    char *seq_type = nullptr;
     int tmp_min_mapq = 1;
 
     opts_s opts;
@@ -73,6 +75,7 @@ int mtVariant_main(int argc, char **argv)
         {"in", 1, nullptr, 0},                      // i
         {"sample", 1, nullptr, 0},                  // s
         {"outdir", 1, nullptr, 0},                  // o
+        {"type",1, nullptr, 0},                     // t
         {"rlen",1, nullptr, 0},                     // k
         {"extend",1, nullptr, 0},                   // x
        // {"seq",1, nullptr, 0},                    // j
@@ -119,6 +122,9 @@ int mtVariant_main(int argc, char **argv)
             break;
         case 'o': // prefix
             outdir = optarg;
+            break;
+        case 't': // sequencing type
+            seq_type = optarg;
             break;
         case 'k': // read length
             opts.read_len_max = (int)std::atoi(optarg);
@@ -189,6 +195,17 @@ int mtVariant_main(int argc, char **argv)
         std::cerr << "No sample name given" << std::endl;
         exit(EXIT_FAILURE);
     }
+    if( seq_type !=nullptr ){
+        if( strcmp(seq_type, "fwd") ==0 || strcmp(seq_type, "rev")==0 || strcmp(seq_type,"unknown")==0 ){
+            std::cerr << "Sequencing type: " << seq_type <<std::endl;
+        }else{
+            std::cerr<< "Sequencing type: "<< seq_type <<" is not right, must be one of fwd,rev,unknown."<<std::endl;
+        }
+    } else {
+        seq_type = new char[strlen("rev") + 1];
+        strcpy(seq_type, "rev");
+        std::cerr<<"The sequencing type is not set, auto-set to rev by default."<<std::endl;
+    }
     if( opts.extend < 0 ){
         std::cerr << "The extend size must >= 0 " << std::endl;
         exit(EXIT_FAILURE);
@@ -247,7 +264,7 @@ int mtVariant_main(int argc, char **argv)
     ReferenceSequence refseq(ref);
     EventScanner events(opts.read_max_mis_ratio,opts.read_max_gap_ratio,opts.min_base_score,opts.read_len_min,opts.filter_primer);
     CoverageCounter coverages((size_t)max_len, opts.max_cov);
-    Primer primer(opts.distance, opts.read_len_max);
+    Primer primer(opts.distance, opts.read_len_max, seq_type);
     VcfWriter writer(coverages, refseq, events, vcf_hdr, vcf_fp, &opts);
 
     char* prefix=(char*)calloc(fn_len, sizeof(char));
@@ -313,13 +330,15 @@ int mtVariant_main(int argc, char **argv)
         if( curr_rec->core.flag & BAM_FSECONDARY ) continue; // secondary alignment
         if( curr_rec->core.qual < opts.min_mapq ) continue; // low mapping quality
         if( chr_idx != curr_rec->core.tid ) continue;
-        //uint8_t *p;
-        //if ((p = bam_aux_get(curr_rec,"XA")) != NULL) {
-	    //    char* xa_tag;
-	    //    xa_tag = bam_aux2Z(p);
-	    //    std::string xa_tag_str(xa_tag);
-        //    std::cerr<<"read name:"<<bam_get_qname(curr_rec)<<",Tag:"<<xa_tag<<std::endl;
-        //}
+
+        uint8_t *p;
+        if ((p = bam_aux_get(curr_rec,"AS")) != NULL) {
+	        // char* xa_tag;
+	        // xa_tag = bam_aux2Z(p);
+	        // std::string xa_tag_str(xa_tag);
+            //std::cerr<<"read name:"<<bam_get_qname(curr_rec)<<",Tag:"<<xa_tag<<std::endl;
+            if( bam_aux2i(p) < 20 ) continue;
+        }
         //std::cerr<<"read name:"<<bam_get_qname(curr_rec)<<",pos:"<<std::to_string(curr_rec->core.pos)<<std::endl;
         events.collect_variant(curr_rec, refseq, coverages, primer);
         int idx = events.get_filter_flag();

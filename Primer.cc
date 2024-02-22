@@ -11,9 +11,10 @@ Primer::Primer()
     //_tfwd_map.clear();
     //_trev_map.clear();
 }
-Primer::Primer(int distance,int read_mlen)
+Primer::Primer(int distance,int read_mlen,std::string seq_type)
 : _distance(distance)
 ,_read_mlen(read_mlen)
+,_seq_type(seq_type)
 {
     _primer_list.clear();
     _pfwd_map.clear();
@@ -105,27 +106,31 @@ void Primer::read_chr_primer(std::string primer_file, std::string chr_name)
             // raw primer fwd start
             int start = (fwd_start < _distance) ? 0 : (fwd_start - _distance);
             int end = (fwd_start + _distance);
-            for(int i=start;i<=end;++i){
-                _pfwd_map.emplace(i, idx);
-            }
-            // trimed primer fwd end
-            //start = (fwd_end < _distance) ? 0 : (fwd_end - _distance);
-            //end = (fwd_end + _distance);
-            //for(int i=start;i<end;++i){
-            //    _tfwd_map.emplace(i, idx);
-            //}
+            if( _seq_type == "fwd" || _seq_type =="unknown" ){
+                for(int i=start;i<=end;++i){
+                    _pfwd_map.emplace(i, idx);
+                }
+                // trimed primer fwd end
+                //start = (fwd_end < _distance) ? 0 : (fwd_end - _distance);
+                //end = (fwd_end + _distance);
+                //for(int i=start;i<end;++i){
+                //    _tfwd_map.emplace(i, idx);
+                //}
 
-            // trimed primer rev start
-            //start = (rev_start < _distance) ? 0 : (rev_start - _distance);
-            //end = (rev_start + _distance);
-            //for(int i=start;i<end;++i){
-            //    _trev_map.emplace(i, idx);
-            //}
-            // raw primer rev end
-            start = (rev_end < _distance) ? 0 : (rev_end - _distance);
-            end = (rev_end + _distance);
-            for(int i=start;i<=end;++i){
-                _prev_map.emplace(i, idx);
+                // trimed primer rev start
+                //start = (rev_start < _distance) ? 0 : (rev_start - _distance);
+                //end = (rev_start + _distance);
+                //for(int i=start;i<end;++i){
+                //    _trev_map.emplace(i, idx);
+                //}
+            }
+            if( _seq_type == "rev" || _seq_type =="unknown" ){
+                // raw primer rev end
+                start = (rev_end < _distance) ? 0 : (rev_end - _distance);
+                end = (rev_end + _distance);
+                for(int i=start;i<=end;++i){
+                    _prev_map.emplace(i, idx);
+                }
             }
             idx++;
         }

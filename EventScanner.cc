@@ -52,19 +52,21 @@ int32_t EventScanner::left_align(const ReferenceSequence &refseq, std::string& s
     return align_pos;
 }
 
-int32_t EventScanner::right_align(const ReferenceSequence &refseq, std::string& seq, int indel_ref_start_pos, int read_last_pos) {
+int32_t EventScanner::right_align(const ReferenceSequence &refseq, std::string& seq, int indel_ref_start_pos, int read_last_pos, bool del ) {
     size_t len = seq.length();
-    uint32_t ref_idx = (uint32_t)indel_ref_start_pos + 1;
+    uint32_t ref_idx = ( del ) ? (uint32_t)(indel_ref_start_pos+len) : (uint32_t)(indel_ref_start_pos+1);
     int align_pos = indel_ref_start_pos;
     uint32_t seq_idx = 0;
 
-    while (ref_idx < read_last_pos && refseq._seq[ref_idx] == seq[seq_idx]) {
-        //++align_pos;
+    while ( ref_idx < read_last_pos && (refseq._seq[ref_idx] == seq[seq_idx] || refseq._seq[ref_idx] == 'N' ) ) {
+        //if( indel_ref_start_pos == 3105 ) std::cerr<<"+++++++++++++"<<std::endl;
+        ++align_pos;
         ++ref_idx;
         seq_idx = (seq_idx + 1) % len;
     }
-    //return align_pos;
-    return ref_idx;
+    //if( indel_ref_start_pos == 3105 ) std::cerr<<"*********** pos:"<<std::to_string(align_pos)<<std::endl;
+    return (del) ? align_pos : (align_pos+1);
+    //return (ref_idx-1);
 }
 
 bool EventScanner::_isHVR( int start_pos, int end_pos ){
@@ -155,7 +157,6 @@ void EventScanner::collect_variant(bam1_t *read, const ReferenceSequence &refseq
         }
     }
 
-    strand = (bam_is_rev(read) == 0);
     r_pos = read->core.pos;
     q_pos = 0;
 
@@ -194,7 +195,7 @@ void EventScanner::collect_variant(bam1_t *read, const ReferenceSequence &refseq
         //    if( mis_end >=4 )  end_idx -= 25;
             //std::cerr<<"read name:"<<read_name<<",trimed start:"<<std::to_string(start_idx)<<",trimed end:"<<std::to_string(end_idx)<<std::endl;
         //}
-        //if( read_name == "FT100023325L1C009R00100457498" ){
+        //if( read_name == "FT100038362L1C012R00401592765" ){
         //    std::cerr<<"********read name:"<<read_name<<",start:"<<std::to_string(start_idx)<<",end:"<<std::to_string(end_idx)<<std::endl;
         //    std::cerr<<"primer_idx:"<<std::to_string(primer_idx)<<",start:"<<std::to_string(start_idx)<<", end:"<<std::to_string(int(end_idx))<<std::endl;
         //}
@@ -210,8 +211,11 @@ void EventScanner::collect_variant(bam1_t *read, const ReferenceSequence &refseq
     std::vector<std::pair<int32_t, int32_t>> coverage_rr_vec, coverage_del_vec;
     std::vector<int> read_vec;
     q_start_idx=0; q_end_idx=len;
-    N = 'N';
     size_t found;
+
+    strand = (bam_is_rev(read) == 0);
+    r_pos = read->core.pos;
+    q_pos = 0;
     for (int i = 0; i < read->core.n_cigar; ++i) {
         c_op = bam_cigar_op(cigar[i]);
         c_len = bam_cigar_oplen(cigar[i]);
@@ -223,15 +227,16 @@ void EventScanner::collect_variant(bam1_t *read, const ReferenceSequence &refseq
                 for(int j=0;j<c_len;++j){
                     seq.push_back(seq_nt16_str[bam_seqi(bseq, q_pos+j)]);
                 }
-                found = seq.find(N);
-                if (found == std::string::npos ) {
-                    right_align_pos = right_align(refseq, seq, r_pos, last_match_ref);
-                    //if( read_name == "FT100023325L1C013R00501482713" ){
+                //found = seq.find(N);
+                //if (found == std::string::npos ) {
+                    right_align_pos = right_align(refseq, seq, r_pos, last_match_ref,false);
+                    //if( read_name == "FT100023325L1C012R00402258842" ){
+                    //     std::cerr<<"read_name:"<<read_name<<",ref_base:"<<refseq._seq[r_pos]<<",after base:"<<refseq._seq[right_align_pos]<<std::endl;
                     //    std::cerr<<"r_pos:"<<std::to_string(r_pos)<<",last_match_ref:"<<std::to_string(last_match_ref)<<",right_pos:"<<std::to_string(right_align_pos)<<",seq:"<<seq<<std::endl;
                     //}
                     //rotate seq if different align position
-                    if( right_align_pos != r_pos ){
-                        std::rotate(seq.begin(), seq.begin() + c_len - (right_align_pos - r_pos) % c_len, seq.end());
+                    if(  right_align_pos > (r_pos+1) ){
+                        std::rotate(seq.begin(), seq.begin() + c_len - (right_align_pos - r_pos-1) % c_len, seq.end());
                     }
                     //std::cerr<<"insert read name:"<<read_name<<",pos:"<<std::to_string(right_align_pos)<<std::endl;
                     if( right_align_pos >= _max_chr_size ) right_align_pos -=  _max_chr_size;
@@ -241,7 +246,7 @@ void EventScanner::collect_variant(bam1_t *read, const ReferenceSequence &refseq
                     this_reads_indels.push_back(
                         IndelEvent(right_align_pos, c_len, q_pos, seq, strand, read->core.qual, primer_idx)
                     );
-                }
+                //}
                 break;
             case BAM_CDEL: // D
                 if(  r_pos < start_idx || r_pos > end_idx ) break;
@@ -250,12 +255,12 @@ void EventScanner::collect_variant(bam1_t *read, const ReferenceSequence &refseq
                 for(int j=0;j<c_len;++j){
                     seq.push_back(refseq._seq[r_pos+j]);
                 }
-                found = seq.find(N);
-                if (found == std::string::npos) {
-                    right_align_pos = right_align(refseq, seq, r_pos, last_match_ref);
-                    //if( read_name == "FT100023325L1C013R00501482713" ){
-                    //    std::cerr<<"r_pos:"<<std::to_string(r_pos)<<",last_match_ref:"<<std::to_string(last_match_ref)<<",right_pos:"<<std::to_string(right_align_pos)<<",seq:"<<seq<<std::endl;
-                    //    std::cerr<<"ref_base:"<<refseq._seq[r_pos]<<",after base:"<<refseq._seq[right_align_pos-1]<<std::endl;
+                //found = seq.find(N);
+                //if (found == std::string::npos) {
+                    right_align_pos = right_align(refseq, seq, r_pos, last_match_ref, true);
+                    //if( read_name == "FT100023325L1C006R00202005176" ){
+                    //    std::cerr<<"read_name:"<<read_name<<",ref_base:"<<refseq._seq[r_pos]<<",after base:"<<refseq._seq[right_align_pos]<<std::endl;
+                    //     std::cerr<<"r_pos:"<<std::to_string(r_pos)<<",last_match_ref:"<<std::to_string(last_match_ref)<<",right_pos:"<<std::to_string(right_align_pos)<<",seq:"<<seq<<std::endl;
                     //}
                     seq.clear();
                     coverage_del_vec.push_back(std::make_pair(right_align_pos, c_len));
@@ -270,7 +275,7 @@ void EventScanner::collect_variant(bam1_t *read, const ReferenceSequence &refseq
                     this_reads_indels.push_back(
                         IndelEvent(right_align_pos, c_len, q_pos, seq, strand, read->core.qual, primer_idx)
                     );
-                }
+                //}
                 break;
             case BAM_CMATCH: // M
             //case BAM_CREF_SKIP: // N
@@ -332,7 +337,11 @@ void EventScanner::collect_variant(bam1_t *read, const ReferenceSequence &refseq
                             allele = seq_nt16_str[bam_seqi(bseq, r_idx)];
                             int tmp_k = (k < _max_chr_size ) ? k : (k - _max_chr_size);
                             int _is_in_end = ( (r_idx - q_start_idx) < _near_end || (q_end_idx - r_idx ) < _near_end ? 1 : 0);
-                            if( refbase == allele || refbase=='N' || allele=='N'){
+                            if( (int)bqual[r_idx] < 20 ){
+                                r_idx++;
+                                continue;
+                            }
+                            if( refbase == allele ){
                                 if( strand ) coverages.add_coverage(tmp_k, COVSIDX_RS);
                                 if( (int)bqual[r_idx] < 20 ) coverages.add_coverage(tmp_k, COVSIDX_LQ);
                                 coverages.add_coverage(tmp_k, COVSIDX_DP);
@@ -370,7 +379,11 @@ void EventScanner::collect_variant(bam1_t *read, const ReferenceSequence &refseq
                     allele = seq_nt16_str[bam_seqi(bseq, r_idx)];
                     int tmp_k = (k < _max_chr_size ) ? k : (k - _max_chr_size);
                     int _is_in_end = ( (r_idx - q_start_idx) < _near_end || (q_end_idx - r_idx ) < _near_end ? 1 : 0);
-                    if( refbase == allele || refbase=='N' || allele=='N'){
+                    if( (int)bqual[r_idx] < 20 ){
+                        r_idx++;
+                        continue;
+                    }
+                    if( refbase == allele ){
                         if( strand ) coverages.add_coverage(tmp_k, COVSIDX_RS);
                         if( (int)bqual[r_idx] < 20 ) coverages.add_coverage(tmp_k, COVSIDX_LQ);
                         coverages.add_coverage(tmp_k, COVSIDX_DP);
@@ -448,6 +461,7 @@ void EventScanner::collect_variant(bam1_t *read, const ReferenceSequence &refseq
             iv_it._avg_nbq = qual_sum / (pos2 - pos1 + 1);
             iv_it._var_rate_gap_and_mismatch = var_rate_gap_and_mismatch;
 
+            if( iv_it._avg_nbq < 20 ) continue;
             const auto &iv_search = _indels.find(iv_it._var_start);
             if (iv_search == _indels.end()) {
                 _indels[iv_it._var_start].insert(std::make_pair(iv_it._id, iv_it));

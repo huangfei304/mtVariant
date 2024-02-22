@@ -53,10 +53,11 @@ class Primer
   public:
     int _distance=6;
     int _read_mlen;
+    std::string _seq_type;
     _PrimerList _primer_list;
 
 
-    Primer(int distance,int read_mlen);
+    Primer(int distance,int read_mlen, std::string seq_type="rev");
     void reset();
     //Primer(std::string primer_file,std::string chr_name);
     //void primer_cluster(int *_site_depth,int size);
