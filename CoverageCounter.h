@@ -3,7 +3,7 @@
 
 namespace mtVariant {
 
-static const int COVS_ALIGN = 6;
+static const int COVS_ALIGN = 7;
 
 enum covs_idx {
     COVSIDX_DP   =   0,   // site reference depth
@@ -11,7 +11,8 @@ enum covs_idx {
     COVSIDX_RS   =   2,  // reference positive strand depth
     COVSIDX_FT   =   3,  // site for depth with filtered
     COVSIDX_ALL  =   4,  // site for depth including variant
-    COVSIDX_RP    =  5   // reference site in reads position
+    COVSIDX_RP    =  5,  // reference site in reads position
+    COVSIDX_PRIMER = 6   // read count for each primer
     // COVSIDX_INS  =   3  // indel insert
    // COVSIDX_SNP  =   4,  // snp variant depth
    // COVSIDX_INDEL =  5   // indel variant depth

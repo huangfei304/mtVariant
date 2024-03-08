@@ -21,8 +21,9 @@ struct PrimerInfo {
     PrimerInfo()
     {
     }
-    PrimerInfo(int f_start, int f_end, int r_start, int r_end)
-        : fwd_start(f_start)
+    PrimerInfo(int idx, int f_start, int f_end, int r_start, int r_end)
+        : index(idx)
+        , fwd_start(f_start)
         , fwd_end(f_end)
         , rev_start(r_start)
         , rev_end(r_end)
@@ -31,6 +32,7 @@ struct PrimerInfo {
         t_insert = (rev_start - fwd_end - 1);
     }
 
+    int index;
     int fwd_start;
     int fwd_end;
     int rev_start;
@@ -38,6 +40,7 @@ struct PrimerInfo {
 
     int p_insert;
     int t_insert;
+    std::string infor;
 };
 
 typedef std::vector<PrimerInfo> _PrimerList;

@@ -36,6 +36,7 @@ class IndelEvent
         int len,
         int q_pos,
         std::string &seq,
+        bool isdel,
         bool strand,
         int mqual,
         int read_start,

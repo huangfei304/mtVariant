@@ -85,13 +85,13 @@ void EventScanner::collect_variant(bam1_t *read, const ReferenceSequence &refseq
     uint8_t *bseq, *bqual;
     uint32_t *cigar, c_op, c_type;
     int nm, gap, c_len, len, r_pos, q_pos, right_align_pos, var_count, last_match_ref, primer_idx;
-    int mis_start, mis_end, q_pos_start, q_pos_end, start_idx, end_idx, q_start_idx, q_end_idx;
+    int mis_start, mis_end,gap_start, gap_end, q_pos_start, q_pos_end, start_idx, end_idx, q_start_idx, q_end_idx;
     std::string seq,read_name;
     AReadsSnpList this_reads_snps;
     AReadsIndelList this_reads_indels;
     AReadsPrimerList this_reads_primers;
 
-    nm = 0; gap=0; q_pos = 0; var_count = 0; mis_start=0;mis_end=0;
+    nm = 0; gap=0; q_pos = 0; var_count = 0; mis_start=0; mis_end=0;
     len = read->core.l_qseq;
     r_pos = read->core.pos;
     bseq = bam_get_seq(read);
@@ -189,16 +189,20 @@ void EventScanner::collect_variant(bam1_t *read, const ReferenceSequence &refseq
             start_idx = tmp_pinfo.fwd_end;
             end_idx = tmp_pinfo.rev_start - 1;
         //}
+
+        // reads end at the pos: 3107, trimmed the primer list
+        if( end_idx == 3182 ) start_idx = 3107; //0-base
         //if( HVR_flag ){
             //std::cerr<<"read name:"<<read_name<<",start:"<<std::to_string(start_idx)<<",end:"<<std::to_string(end_idx)<<std::endl;
         //    if(  mis_start >=4 )  start_idx += 25;
         //    if( mis_end >=4 )  end_idx -= 25;
             //std::cerr<<"read name:"<<read_name<<",trimed start:"<<std::to_string(start_idx)<<",trimed end:"<<std::to_string(end_idx)<<std::endl;
         //}
-        //if( read_name == "FT100038362L1C012R00401592765" ){
+        //if( read_name == "FT100038547L1C007R00500842346" ){
         //    std::cerr<<"********read name:"<<read_name<<",start:"<<std::to_string(start_idx)<<",end:"<<std::to_string(end_idx)<<std::endl;
         //    std::cerr<<"primer_idx:"<<std::to_string(primer_idx)<<",start:"<<std::to_string(start_idx)<<", end:"<<std::to_string(int(end_idx))<<std::endl;
         //}
+        coverages.add_coverage(tmp_pinfo.index, COVSIDX_PRIMER);
     }
 
     if( (end_idx - start_idx+1) < _read_min_len ) {
@@ -244,7 +248,7 @@ void EventScanner::collect_variant(bam1_t *read, const ReferenceSequence &refseq
                     //    std::cerr<<"insert read name:"<<read_name<<std::endl;
                     //}
                     this_reads_indels.push_back(
-                        IndelEvent(right_align_pos, c_len, q_pos, seq, strand, read->core.qual, primer_idx)
+                        IndelEvent(right_align_pos, c_len, q_pos, seq, false, strand, read->core.qual, primer_idx)
                     );
                 //}
                 break;
@@ -258,22 +262,23 @@ void EventScanner::collect_variant(bam1_t *read, const ReferenceSequence &refseq
                 //found = seq.find(N);
                 //if (found == std::string::npos) {
                     right_align_pos = right_align(refseq, seq, r_pos, last_match_ref, true);
-                    //if( read_name == "FT100023325L1C006R00202005176" ){
+                    //if( read_name == "FT100023315L1C007R00102147106" ){
                     //    std::cerr<<"read_name:"<<read_name<<",ref_base:"<<refseq._seq[r_pos]<<",after base:"<<refseq._seq[right_align_pos]<<std::endl;
-                    //     std::cerr<<"r_pos:"<<std::to_string(r_pos)<<",last_match_ref:"<<std::to_string(last_match_ref)<<",right_pos:"<<std::to_string(right_align_pos)<<",seq:"<<seq<<std::endl;
+                    //    std::cerr<<"r_pos:"<<std::to_string(r_pos)<<",last_match_ref:"<<std::to_string(last_match_ref)<<",right_pos:"<<std::to_string(right_align_pos)<<",seq:"<<seq<<std::endl;
                     //}
-                    seq.clear();
+                    //seq.clear();
                     coverage_del_vec.push_back(std::make_pair(right_align_pos, c_len));
                     if( right_align_pos > r_pos ){
                         coverage_rr_vec.push_back(std::make_pair(r_pos, (right_align_pos-r_pos)));
                         read_vec.push_back(q_pos);
+                        std::rotate(seq.begin(), seq.begin() + c_len - (right_align_pos - r_pos) % c_len, seq.end());
                     }
                     if( right_align_pos >= _max_chr_size ) right_align_pos -=  _max_chr_size;
                     //if(right_align_pos == 1890 ){
                     //    std::cerr<<"indel read name:"<<read_name<<std::endl;
                     //}
                     this_reads_indels.push_back(
-                        IndelEvent(right_align_pos, c_len, q_pos, seq, strand, read->core.qual, primer_idx)
+                        IndelEvent(right_align_pos, c_len, q_pos, seq, true, strand, read->core.qual, primer_idx)
                     );
                 //}
                 break;
@@ -337,13 +342,13 @@ void EventScanner::collect_variant(bam1_t *read, const ReferenceSequence &refseq
                             allele = seq_nt16_str[bam_seqi(bseq, r_idx)];
                             int tmp_k = (k < _max_chr_size ) ? k : (k - _max_chr_size);
                             int _is_in_end = ( (r_idx - q_start_idx) < _near_end || (q_end_idx - r_idx ) < _near_end ? 1 : 0);
-                            if( (int)bqual[r_idx] < 20 ){
+                            if( (int)bqual[r_idx] < _base_score ){
                                 r_idx++;
                                 continue;
                             }
                             if( refbase == allele ){
                                 if( strand ) coverages.add_coverage(tmp_k, COVSIDX_RS);
-                                if( (int)bqual[r_idx] < 20 ) coverages.add_coverage(tmp_k, COVSIDX_LQ);
+                                if( (int)bqual[r_idx] < _base_score ) coverages.add_coverage(tmp_k, COVSIDX_LQ);
                                 coverages.add_coverage(tmp_k, COVSIDX_DP);
                                 coverages.add_coverage(tmp_k, COVSIDX_ALL);
                                 //_read_pos[tmp_k] += (float)(r_idx)/(float)len;
@@ -351,16 +356,17 @@ void EventScanner::collect_variant(bam1_t *read, const ReferenceSequence &refseq
                                 //primer_add_count(k, primer_idx);
                                 this_reads_primers.push_back(std::make_pair(tmp_k, primer_idx));
                                 //if( tmp_k == 5737 || tmp_k == 5759 || tmp_k == 10667 ){ // 0-base
-                                //    std::cerr<<"pos: "<<std::to_string(tmp_k)<<",read name:"<<read_name<<",read_idx:"<<std::to_string(r_idx)<<",base:"<<allele<<", base quality:"<<std::to_string(bqual[r_idx])<<std::endl;
-                                //}
+                                if( tmp_k == 9307   ){ // 0-base
+                                   std::cerr<<"pos: "<<std::to_string(tmp_k)<<",read name:"<<read_name<<",read_idx:"<<std::to_string(r_idx)<<",base:"<<allele<<", base quality:"<<std::to_string(bqual[r_idx])<<std::endl;
+                                }
                             }else{
                                 ++var_count;
                                 coverages.add_coverage(tmp_k, COVSIDX_ALL);
                                 //double relpos = (double)(r_idx)/(double)len;
                                 double relpos = _is_in_end;
-                                //if( tmp_k == 5737 || tmp_k == 5759 || tmp_k == 10667 ){ // 0-base
-                                //    std::cerr<<"pos: "<<std::to_string(tmp_k)<<",read name:"<<read_name<<",read_idx:"<<std::to_string(r_idx)<<",base:"<<allele<<", base quality:"<<std::to_string(bqual[r_idx])<<std::endl;
-                                //}
+                                if( tmp_k == 9307 ){ // 0-base
+                                    std::cerr<<"pos: "<<std::to_string(tmp_k)<<",read name:"<<read_name<<",read_idx:"<<std::to_string(r_idx)<<",base:"<<allele<<", base quality:"<<std::to_string(bqual[r_idx])<<std::endl;
+                                }
                                 this_reads_snps.push_back(std::make_pair(
                                     tmp_k,
                                     SnpEvent(allele, strand, (int)bqual[r_idx], relpos, this->snp_nqs(r_idx, len, bqual),primer_idx)
@@ -379,30 +385,31 @@ void EventScanner::collect_variant(bam1_t *read, const ReferenceSequence &refseq
                     allele = seq_nt16_str[bam_seqi(bseq, r_idx)];
                     int tmp_k = (k < _max_chr_size ) ? k : (k - _max_chr_size);
                     int _is_in_end = ( (r_idx - q_start_idx) < _near_end || (q_end_idx - r_idx ) < _near_end ? 1 : 0);
-                    if( (int)bqual[r_idx] < 20 ){
+                    if( (int)bqual[r_idx] < _base_score ){
                         r_idx++;
                         continue;
                     }
                     if( refbase == allele ){
                         if( strand ) coverages.add_coverage(tmp_k, COVSIDX_RS);
-                        if( (int)bqual[r_idx] < 20 ) coverages.add_coverage(tmp_k, COVSIDX_LQ);
+                        if( (int)bqual[r_idx] < _base_score ) coverages.add_coverage(tmp_k, COVSIDX_LQ);
                         coverages.add_coverage(tmp_k, COVSIDX_DP);
                         coverages.add_coverage(tmp_k, COVSIDX_ALL);
                         //_read_pos[tmp_k] += (float)(r_idx)/(float)len;
                         _read_pos[tmp_k] += _is_in_end;
                         //primer_add_count(k, primer_idx);
                         this_reads_primers.push_back(std::make_pair(tmp_k, primer_idx));
-                        //if( tmp_k == 5737 || tmp_k == 5759 || tmp_k == 10667 ){ // 0-base
-                        //    std::cerr<<"pos: "<<std::to_string(tmp_k)<<",read name:"<<read_name<<",read_idx:"<<std::to_string(r_idx)<<",base:"<<allele<<", base quality:"<<std::to_string(bqual[r_idx])<<std::endl;
-                        //}
+                        //if( tmp_k == 3106  ){ // 0-base
+                        if( tmp_k == 9307  ){ // 0-base
+                            std::cerr<<"pos: "<<std::to_string(tmp_k)<<",read name:"<<read_name<<",read_idx:"<<std::to_string(r_idx)<<",base:"<<allele<<", base quality:"<<std::to_string(bqual[r_idx])<<std::endl;
+                        }
                     }else{
                         ++var_count;
                         coverages.add_coverage(tmp_k, COVSIDX_ALL);
                         //double relpos = (double)(r_idx)/(double)len;
                         double relpos = _is_in_end;
-                        //if( tmp_k == 5737 || tmp_k == 5759 || tmp_k == 10667 ){// 0-base
-                        //    std::cerr<<"pos: "<<std::to_string(tmp_k)<<",read name:"<<read_name<<",read_idx:"<<std::to_string(r_idx)<<",base:"<<allele<<", base quality:"<<std::to_string(bqual[r_idx])<<std::endl;
-                        //}
+                        if( tmp_k == 9307  ){// 0-base
+                            std::cerr<<"pos: "<<std::to_string(tmp_k)<<",read name:"<<read_name<<",read_idx:"<<std::to_string(r_idx)<<",base:"<<allele<<", base quality:"<<std::to_string(bqual[r_idx])<<std::endl;
+                        }
                         this_reads_snps.push_back(std::make_pair(
                             tmp_k,
                             SnpEvent(allele, strand, (int)bqual[r_idx], relpos, this->snp_nqs(r_idx, len, bqual),primer_idx)
@@ -461,7 +468,7 @@ void EventScanner::collect_variant(bam1_t *read, const ReferenceSequence &refseq
             iv_it._avg_nbq = qual_sum / (pos2 - pos1 + 1);
             iv_it._var_rate_gap_and_mismatch = var_rate_gap_and_mismatch;
 
-            if( iv_it._avg_nbq < 20 ) continue;
+            if( iv_it._avg_nbq < _base_score ) continue;
             const auto &iv_search = _indels.find(iv_it._var_start);
             if (iv_search == _indels.end()) {
                 _indels[iv_it._var_start].insert(std::make_pair(iv_it._id, iv_it));

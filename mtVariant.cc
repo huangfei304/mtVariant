@@ -3,6 +3,7 @@
 #include <fstream>
 #include <getopt.h>
 #include <iostream>
+#include <fstream>
 #include <sstream>
 #include <unistd.h>
 
@@ -28,7 +29,7 @@ Required arguments:\n\
     -i, --in IN             Sorted and indexed input BAM or CRAM file\n\
     -s, --sample SN         Sample name to use in the output VCF file\n\
     -o, --outdir DIR        Output directory\n\
-    -t, --type STR          Sequencing Type, fwd, rev or unknown, [rev]\n\
+    -t, --type STR          Sequencing Type, fwd, rev or unknown(as both), [rev]\n\
 \n\
 Options:\n\
     -k, --rlen INT           The reads length [100]\n\
@@ -36,12 +37,13 @@ Options:\n\
     -e, --read INT           Minimum reads length, after trim-primer. [40]\n\
     -p, --primer STR         Primer file for filter primer sequence and non-specific PCR sequence\n\
                              Format: chrM<tab>F_start<tab>F_end<tab>R_start<tab>R_end\n\
+    -P, --pread  STR         Output file for read count of each primer\n\
     -O, --out STR            Output filtered read mapping result, bam format.\n\
     -n, --dist   INT         Flank distance of primer start allowed [5]\n\
     -q, --qual   INT         Minimum reads mapping quality [1]\n\
-    -b, --base   INT         Minimum base quality for SNP [1]\n\
+    -b, --base   INT         Minimum base quality for SNP [20]\n\
     -d, --depth  INT         Minimum variant depth [2]\n\
-    //-t, --site   INT         Minimum site depth [6]\n\
+    -S, --site   INT         Minimum site depth [10]\n\
     -m, --mis    FLT         Maximum reads mismatch rate to filter read for non-HVR, HVR is 1.5-fold. [0.05]\n\
     -g, --gap    FLT         Maximum reads gap rate to filter read for non-HVR, HVR is 1.5-fold. [0.02]\n\
     -c, --cov    INT         Maximum read depth [65536]\n\
@@ -66,6 +68,7 @@ int mtVariant_main(int argc, char **argv)
     char *primer_fn = nullptr;
     char *out_bam = nullptr;
     char *seq_type = nullptr;
+    char *out_primer_file = nullptr;
     int tmp_min_mapq = 1;
 
     opts_s opts;
@@ -82,21 +85,22 @@ int mtVariant_main(int argc, char **argv)
         {"read", 1, nullptr, 0},                    // e
        //{"filter",0, nullptr,0},                    // f
         {"primer",1, nullptr, 0},                   // p
+        {"pread",1, nullptr, 0},                    // P
         {"out",1, nullptr, 0},                      // O
         {"dist",1, nullptr, 0},                     // n
         {"qual", 1, nullptr, 0},                    // q
         {"base",1, nullptr, 0},                     // b
         {"depth",1, nullptr, 0},                    // d
-        //{"site", 1, nullptr, 0},                    // t
+        {"site", 1, nullptr, 0},                    // S
         {"mis", 1, nullptr, 0},                     // m
         {"gap", 1, nullptr, 0},                     // g
         {"cov", 1, nullptr, 0},                     // c
         {"rate", 1, nullptr, 0},                    // a
-        //{"all", 0, nullptr, 0},                    //  l
+        //{"all", 0, nullptr, 0},                    // l
         {"help", 0, nullptr, 0},                    // h
         {nullptr, 0, nullptr, 0}};
-    const char *short_options = "r:i:s:o:k:x:e:p:O:n:q:b:d:t:m:g:c:a:lh";
-    const char *shorter_options = "risokxepOnqbdtmgcalh";
+    const char *short_options = "r:i:s:o:k:x:e:p:P:O:n:q:b:d:t:S:m:g:c:a:lh";
+    const char *shorter_options = "risokxepPOnqbdtSmgcalh";
 
     if (argc == 1) {
         usage();
@@ -139,6 +143,9 @@ int mtVariant_main(int argc, char **argv)
             primer_fn = optarg;
             opts.filter_primer = true;
             break;
+        case 'P': // output primer read count file
+            out_primer_file = optarg;
+            break;
         case 'O': // output bam file
             out_bam = optarg;
             break;
@@ -151,9 +158,9 @@ int mtVariant_main(int argc, char **argv)
         case 'd': // min-variant-depth
             opts.min_var_dp = (uint8_t)std::atoi(optarg);
             break;
-        //case 't': // min-site-depth
-        //    opts.min_site_dp = (uint8_t)std::atoi(optarg);
-        //    break;
+        case 'S': // min-site-depth
+            opts.min_site_dp = (int)std::atoi(optarg);
+            break;
         case 'm': // max read mismatch rate
             opts.read_max_mis_ratio = std::atof(optarg);
             break;
@@ -200,6 +207,7 @@ int mtVariant_main(int argc, char **argv)
             std::cerr << "Sequencing type: " << seq_type <<std::endl;
         }else{
             std::cerr<< "Sequencing type: "<< seq_type <<" is not right, must be one of fwd,rev,unknown."<<std::endl;
+            exit(EXIT_FAILURE);
         }
     } else {
         seq_type = new char[strlen("rev") + 1];
@@ -354,7 +362,8 @@ int mtVariant_main(int argc, char **argv)
     opts.read_short = events.get_short_read_count();
     mapstat.calCoverage(chr_name, max_len);
     mapstat.printDepth(chr_name, max_len, false);
-    opts.min_site_dp = 2 * mapstat.get_median_depth() / 10;
+    opts.min_low_depth = 2 * mapstat.get_median_depth() / 10;
+    if( opts.min_low_depth <  opts.min_site_dp ) opts.min_low_depth = opts.min_site_dp;
 
     writer.setup_vcf(sample_name, argc, argv, MTVARIANT_VERSION, ref);
     if (bcf_hdr_write(vcf_fp, vcf_hdr)) {
@@ -368,6 +377,20 @@ int mtVariant_main(int argc, char **argv)
             fprintf(stderr, "error closing output file\n");
             exit(EXIT_FAILURE);
         }
+    }
+    if( opts.filter_primer && out_primer_file !=nullptr ) {
+        FILE *fout = fopen(out_primer_file,"w");
+        if( !fout ) std::cerr<<"Fail to open primer depth file:"<<out_primer_file<<std::endl;
+        int size = primer._primer_list.size();
+        int total = 0;
+        for(int i=0;i<size;++i){
+            total += coverages.get_coverage(i, COVSIDX_PRIMER);
+        }
+        fprintf(fout,"F_Primer_Start\tR_Primer_End\tReadCount\tPercentage(%)\n");
+        for(int i=0; i<size; ++i ){
+            fprintf(fout,"%d\t%d\t%d\t%.4f\n", primer._primer_list[i].fwd_start,primer._primer_list[i].rev_end,coverages.get_coverage(i, COVSIDX_PRIMER),100.0*coverages.get_coverage(i, COVSIDX_PRIMER)/(1.0*total));
+        }
+        fclose(fout);
     }
     coverages.reset();
     events.reset();

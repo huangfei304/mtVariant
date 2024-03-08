@@ -22,15 +22,15 @@ IndelEvent::IndelEvent()
     _read_start.clear();
 }
 
-IndelEvent::IndelEvent(int start, int len, int q_pos,  std::string &seq, bool strand, int mqual, int read_start, int nearend, int avgnbq, double vrate)
+IndelEvent::IndelEvent(int start, int len, int q_pos,  std::string &seq, bool isdel, bool strand, int mqual, int read_start, int nearend, int avgnbq, double vrate)
      : _map_qual(mqual),
       _var_start(start),
       _var_len(len),
       _q_pos(q_pos),
       _seq(seq),
-      _id(seq.empty() ? std::to_string(len) : seq),
+      _id(isdel ? std::to_string(len) : seq),
       _read_count(1),
-      _isdel(seq.empty()),
+      _isdel(isdel),
       _near_read_end_count(nearend),
       _avg_nbq(avgnbq),
       _var_rate_gap_and_mismatch(vrate)

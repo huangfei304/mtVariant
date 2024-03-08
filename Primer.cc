@@ -86,6 +86,8 @@ void Primer::read_chr_primer(std::string primer_file, std::string chr_name)
         int fwd_end  =   atoi(strtok(NULL,delims));
         int rev_start =  atoi(strtok(NULL,delims));
         int rev_end   = atoi(strtok(NULL,delims));
+        //char* infor=strdup(strtok(NULL, delims));
+        //std::string info(infor, strlen(infor));
         if( chr_s == chr_name ){
             if( fwd_start > fwd_end || rev_start > rev_end ) {
                 std::cerr<<"The fwd/rev start > fwd/rev end, please check!"<<std::endl;
@@ -100,7 +102,7 @@ void Primer::read_chr_primer(std::string primer_file, std::string chr_name)
                 rev_end = tmp_end;
             }
 
-            PrimerInfo tmp_pinfo(fwd_start,fwd_end, rev_start, rev_end);
+            PrimerInfo tmp_pinfo(idx, fwd_start,fwd_end, rev_start, rev_end);
             _primer_list.push_back(tmp_pinfo);
 
             // raw primer fwd start

@@ -26,7 +26,7 @@ MapStat::MapStat(
     std::string depthfile = _prefix+".depth.xls.gz";
     gzout = gzopen(depthfile.c_str(),"wb");
     if( gzout == nullptr ) std::cerr<<"Fail to open depth file:"<<depthfile<<std::endl;
-    gzprintf(gzout,"chr\tpos\tdepth\n");
+    gzprintf(gzout,"chr\tpos\tdepth(no_included_indel)\n");
 }
 
 MapStat::~MapStat()

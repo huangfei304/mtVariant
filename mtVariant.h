@@ -12,15 +12,16 @@
 
 typedef std::vector< std::pair< std::string, uint32_t >> regions_list_t;
 typedef struct opts {
-    uint8_t min_var_dp=2;   //min variant depth
+    uint8_t min_var_dp=4;   //min variant depth
     int min_site_dp=10;  //min site depth
     uint8_t min_base_score=20; //min base quality
+    int min_low_depth = 0; // 0.2 * median_depth
 
-    float snp_het_min=0.15; // min read ratio for snp het
+    float snp_het_min=0.10; // min read ratio for snp het
     float snp_het_max=0.85; // max read ratio for snp het
     //double snp_strand_ratio_cutoff=0.1;
 
-    float indel_het_min=0.15; //min read ratio for indel het
+    float indel_het_min=0.10; //min read ratio for indel het
     float indel_het_max=0.80; //max read ratio for indel het
     float indel_min_var_ratio=0.1; // min variant read ratio for indel
 

@@ -88,8 +88,8 @@ void VcfWriter::setup_vcf_header(const char *sn, int argc, char **argv, const ch
     // FILTER
     bcf_hdr_printf(hdr, "##FILTER=<ID=lowVR,Description=\"Variant read depth < %d\">\n", _opts->min_var_dp);
     bcf_hdr_append(hdr, "##FILTER=<ID=lowVRT,Description=\"Variant read ratio is less than PL cutoff\">\n");
-    bcf_hdr_printf(hdr, "##FILTER=<ID=lowC,Description=\"Total coverage < %d (0.2*median_depth)\">\n", _opts->min_site_dp);
-    bcf_hdr_append(hdr, "##FILTER=<ID=lowQ,Description=\"Variant average base quality is low (Q<20)\">\n");
+    bcf_hdr_printf(hdr, "##FILTER=<ID=lowC,Description=\"Total coverage < %d (0.2*median_depth)\">\n", _opts->min_low_depth);
+    bcf_hdr_printf(hdr, "##FILTER=<ID=lowQ,Description=\"Variant average base quality is low (Q < %d)\">\n", _opts->min_base_score);
     //bcf_hdr_append(hdr, "##FILTER=<ID=highRE,Description=\"Variant with high ratio of read near start or end (< 5 bp) > 0.96\">\n");
     //bcf_hdr_append(hdr, "##FILTER=<ID=,Description=\"Variant with high ratio of read near start or end (< 5 bp) > 0.96\">\n");
 
@@ -216,7 +216,8 @@ bool VcfWriter::print_snp_buffer(int32_t var_pos,float _read_pos)
     float tmpf;
     int32_t tmpi, gt_arr[2], pl_arr[3],base_qual, flank_base_qual;
     int var_cov, dp_cov, rr_cov, ar_cov, total_coverage;
-    std::string basecount="";
+    std::string basecount;
+    basecount.clear();
 
     // for each snp event up to next variant or end
     SnpMap::iterator sv_it = _events->_snps.find(var_pos);
@@ -233,6 +234,22 @@ bool VcfWriter::print_snp_buffer(int32_t var_pos,float _read_pos)
         //basecount.push_back(',');
         //std::cerr<<"baseCount:"<<basecount<<std::endl;
     }
+
+    //if( _events->_indels.find(var_pos+1) != _events->_indels.end() ){
+    //    IndelMap::iterator iv_it = _events->_indels.find(var_pos+1);
+    //    auto ivg_it = iv_it->second.begin();
+    //    while (ivg_it != iv_it->second.end()) {
+    //        int tmp_count = std::min(ivg_it->second._read_count, _coverages->get_max_coverage());
+    //        ar_cov += tmp_count;
+    //        if (ivg_it->second._isdel) {//delete
+    //            basecount = basecount + "del" + ivg_it->second._seq + ":" + std::to_string(tmp_count)+",";
+    //        } else {//insert
+                //basecount.push_back(_sequences->_seq[ivg_it->second._var_start - 1]);
+    //            basecount = basecount + "ins" + ivg_it->second._seq + ":" + std::to_string(tmp_count)+",";
+    //        }
+    //        ++ivg_it;
+    //    }
+    //}
 
     refbase = _sequences->_seq[sv_it->first];
     rr_cov = _coverages->get_coverage(sv_it->first, COVSIDX_DP);
@@ -320,7 +337,10 @@ bool VcfWriter::print_snp_buffer(int32_t var_pos,float _read_pos)
         }
         **/
         double var_rate = (double)var_cov / (double)(rr_cov+var_cov);
-        if( var_rate >= _opts->snp_het_min ){
+        if( (rr_cov+var_cov) < _opts->min_site_dp ){
+            gt_arr[0] = bcf_gt_unphased(0);
+            gt_arr[1] = bcf_gt_unphased(0);
+        } else if( var_rate >= _opts->snp_het_min ){
             if( var_rate >= _opts->snp_het_max){
                 gt_arr[0] = bcf_gt_unphased(1);
             }else{
@@ -329,7 +349,7 @@ bool VcfWriter::print_snp_buffer(int32_t var_pos,float _read_pos)
             }
             gt_arr[1] = bcf_gt_unphased(1);
             genotype = true;
-        }else{
+        } else {
             gt_arr[0] = bcf_gt_unphased(0);
             gt_arr[1] = bcf_gt_unphased(0);
         }
@@ -400,11 +420,11 @@ bool VcfWriter::print_snp_buffer(int32_t var_pos,float _read_pos)
             float low_qual[2] = {ref_lowq_rate, called_snp.get_lowqual_rate()};
             bcf_update_info_float(_vcf_hdr, _vcf_rec, "LowQR", &low_qual, 2);
 
-            if( base_qual < 20 ) {
+            if( base_qual < _opts->min_base_score ) {
                 bcf_update_filter(_vcf_hdr, _vcf_rec, &_filter_idx[_FILTER_LOW_QUAL], 1);
             }else if( _opts->filter_primer && _het_flag && fisher_twosided_p < 0.01 ){
                 bcf_update_filter(_vcf_hdr, _vcf_rec, &_filter_idx[_FILTER_PRIMER_SPECIFIC], 1);
-            }else if ( (rr_cov+var_cov) < _opts->min_site_dp ) {
+            }else if ( (rr_cov+var_cov) < _opts->min_low_depth ) {
                 bcf_update_filter(_vcf_hdr, _vcf_rec, &_filter_idx[_FILTER_LOW_COVERAGE],1);
                 //bcf_add_filter(_vcf_hdr, _vcf_rec, _filter_idx[_FILTER_LOW_COVERAGE]);
             }else if (var_cov <= _opts->min_var_dp ) {
@@ -474,9 +494,10 @@ bool VcfWriter::print_indel_buffer(int32_t var_pos,float _read_pos)
     double p_value, var_ratio, ref_ratio;
     float tmpf, near_read_end_ratio;
     int32_t tmpi, var_start, gt_arr[2], pl_arr[3], base_qual, flank_base_qual;
-    std::string alt, ref;
+    std::string alt, ref, basecount;
     int ar_cov, total_coverage, rr_cov;
 
+    basecount.clear();
     IndelMap::iterator iv_it = _events->_indels.find(var_pos);
     //for (iv_it = _events->_indels.begin(); iv_it != _events->_indels.end() && iv_it->first < next_var_pos; ++iv_it) {
     ar_cov = 0;
@@ -495,7 +516,62 @@ bool VcfWriter::print_indel_buffer(int32_t var_pos,float _read_pos)
         ++ivg_it;
     }
 
+    //if( var_pos > 0 && _events->_snps.find(var_pos-1) != _events->_snps.end() ){
+    //    SnpMap::iterator sv_it = _events->_snps.find(var_pos-1);
+    //    for (auto &allele_it : sv_it->second) {
+    //        size_t num_allele = allele_it.second._read_count;
+    //        ar_cov += num_allele;
+    //        basecount.push_back(allele_it.second._allele_base);
+    //        basecount = basecount + ":"+std::to_string(num_allele)+",";
+    //    }
+    //}
+
     IndelEvent &called_indel = *called_indel_ptr;
+    // ref and alt sequences
+    ref.clear();
+    alt.clear();
+    if (called_indel._isdel) {
+        ref.append(_sequences->_seq + called_indel._var_start - 1, (size_t)called_indel._var_len + 1);
+        alt.push_back(_sequences->_seq[called_indel._var_start - 1]);
+    } else {
+        refbase = _sequences->_seq[called_indel._var_start - 1];
+        ref.push_back(refbase);
+        alt.push_back(refbase);
+        alt.append(called_indel._seq);
+    }
+
+    int ref_len = ref.size();
+    ivg_it = iv_it->second.begin();
+    while (ivg_it != iv_it->second.end()) {
+        if ( called_indel_ptr->_isdel == ivg_it->second._isdel ){
+            int tmp_count = std::min(ivg_it->second._read_count, _coverages->get_max_coverage());
+            if (ivg_it->second._isdel) {//delete
+                //basecount = basecount + "del" + ivg_it->second._seq + ":" + std::to_string(tmp_count)+",";
+                //basecount = basecount +  ivg_it->second._seq + ":" + std::to_string(tmp_count)+",";
+
+                //chrM    522     CAC C   PASS    A:14,AC:5985,ACC:1,CAC:46     1/1
+                //chrM:522:CAC>C
+                //delA => CA>C, write to CC
+                //delAC => CAC>C, write to C
+                //delACC => CACC>C, write to C-C
+                std::string mut = ref;
+                if( ivg_it->second._seq.size() > ref.size()){
+                    mut.replace(1,ref_len-1,"-");
+                    basecount = basecount + mut + ivg_it->second._seq.substr(ref_len-1,(ivg_it->second._seq.size()-ref_len+1));
+                    basecount = basecount + ":" + std::to_string(tmp_count) + ",";
+                }else if( ivg_it->second._seq.size() < ref.size() ){
+                    mut.replace(1,ivg_it->second._seq.size(),"");
+                    basecount = basecount + mut + ":" + std::to_string(tmp_count) + ",";
+                }
+            } else {//insert
+                //basecount = basecount + "ins" + ivg_it->second._seq + ":" + std::to_string(tmp_count)+",";
+                basecount.push_back(_sequences->_seq[ivg_it->second._var_start - 1]);
+                basecount = basecount  + ivg_it->second._seq + ":" + std::to_string(tmp_count)+",";
+            }
+        }
+        ++ivg_it;
+    }
+
     // "start position" for coverage
     var_start = called_indel._var_start;
     // what happens if var_start == 0, is that even valid?
@@ -523,7 +599,7 @@ bool VcfWriter::print_indel_buffer(int32_t var_pos,float _read_pos)
     }else{
         var_ratio = (double)called_indel_read_count / (double)total_coverage;
         ref_ratio = (double) rr_cov / (double)total_coverage;
-        if ( total_coverage< _opts->min_site_dp || total_coverage<0.05 * tmp_total_cov || var_ratio <= _opts->indel_het_min) {
+        if ( (called_indel_read_count + rr_cov) < _opts->min_site_dp || total_coverage < 0.05 * tmp_total_cov || var_ratio <= _opts->indel_het_min) {
             gt_arr[0] = bcf_gt_unphased(0);
             gt_arr[1] = bcf_gt_unphased(0);
         } else {
@@ -605,9 +681,9 @@ bool VcfWriter::print_indel_buffer(int32_t var_pos,float _read_pos)
                 bcf_update_filter(_vcf_hdr, _vcf_rec, &_filter_idx[_FILTER_LOW_VARIANTREADS],1);
             }else if( _opts->filter_primer && _het_flag && fisher_twosided_p < 0.01 ){
                 bcf_update_filter(_vcf_hdr, _vcf_rec, &_filter_idx[_FILTER_PRIMER_SPECIFIC], 1);
-            }else if((called_indel_read_count+rr_cov) < _opts->min_site_dp) {
+            }else if((called_indel_read_count+rr_cov) < _opts->min_low_depth ) {
                 bcf_update_filter(_vcf_hdr, _vcf_rec, &_filter_idx[_FILTER_LOW_COVERAGE],1);
-                genotype = false;
+                //genotype = false;
             }else if(var_ratio < _opts->indel_min_var_ratio) {
                 bcf_update_filter(_vcf_hdr, _vcf_rec, &_filter_idx[_FILTER_LOW_VARIANTRATIO],1);
             }else{
@@ -622,19 +698,6 @@ bool VcfWriter::print_indel_buffer(int32_t var_pos,float _read_pos)
     double near_read_end_sum[3];
     uint32_t near_read_end_n[3];
 
-    // ref and alt sequences
-    ref.clear();
-    alt.clear();
-    if (called_indel._isdel) {
-        ref.append(_sequences->_seq + called_indel._var_start - 1, (size_t)called_indel._var_len + 1);
-        alt.push_back(_sequences->_seq[called_indel._var_start - 1]);
-    } else {
-        refbase = _sequences->_seq[called_indel._var_start - 1];
-        ref.push_back(refbase);
-        alt.push_back(refbase);
-        alt.append(called_indel._seq);
-    }
-
     //if ( genotype ) { // 1M1D74M or 74M1D1M
         // if(called_indel._isdel && (near_read_end_ratio>0.98 || near_read_end_ratio <0.02) && ref.length()==2 ){
         //if( genotype && near_read_end_ratio>0.96 ){
@@ -648,6 +711,10 @@ bool VcfWriter::print_indel_buffer(int32_t var_pos,float _read_pos)
     _indel_alleles[1] = alt.c_str();
     bcf_update_alleles(_vcf_hdr, _vcf_rec, _indel_alleles, 2);
     bcf_update_genotypes(_vcf_hdr, _vcf_rec, gt_arr, 2);
+
+    //basecount.push_back(ref);
+    basecount = basecount + ref + ":" + std::to_string(rr_cov);
+    bcf_update_info_string(_vcf_hdr, _vcf_rec, "BaseNum", basecount.c_str());
 
     //if( ref =="CN" ){
     //    std::cerr<<"var_pos:"<<std::to_string(var_pos)<<std::endl;
@@ -682,7 +749,8 @@ void VcfWriter::print_novar_buffer(int32_t var_pos)
     int32_t tmpi, gt_arr[2], pl_arr[3];
     int var_cov, total_coverage,ref_coverage;
     qual_t qual;
-    std::string basecount="";
+    std::string basecount;
+    basecount.clear();
 
     var_cov = 0;
     // for each snp event up to next variant or end
@@ -700,8 +768,22 @@ void VcfWriter::print_novar_buffer(int32_t var_pos)
     ref_coverage = _coverages->get_coverage(var_pos, COVSIDX_DP);
     refbase = _sequences->_seq[var_pos];
     //var_cov = _coverages->get_coverage(var_pos, COVSIDX_ALL) - _coverages->get_coverage(var_pos, COVSIDX_DP);
-    total_coverage = var_cov + ref_coverage;
 
+    //IndelMap::iterator iv_it = _events->_indels.find(var_pos+1);
+    //if( iv_it != _events->_indels.end() ){
+    //    for (auto &ivg_it : iv_it->second ) {
+    //        int tmp_count = std::min(ivg_it.second._read_count, _coverages->get_max_coverage());
+    //        var_cov += tmp_count;
+    //        if (ivg_it.second._isdel) {//delete
+    //            basecount = basecount + "del" + ivg_it.second._seq + ":" + std::to_string(tmp_count)+",";
+    //        } else {//insert
+                //basecount.push_back(refbase);
+    //            basecount = basecount + "ins" + ivg_it.second._seq + ":" + std::to_string(tmp_count)+",";
+    //        }
+    //    }
+    //}
+
+    total_coverage = var_cov + ref_coverage;
     bcf_clear1(_vcf_rec);
     // set filter and genotype
     //bcf_update_filter(_vcf_hdr, _vcf_rec, &_pass_int, 1);
@@ -793,22 +875,37 @@ void VcfWriter::print_variant_buffer(std::string chr, int32_t chr_len){
             snp1_dp = rr_cov + var_cov;
             snp1_rate = (float) var_cov / (float) snp1_dp;
         }
-        //if (i == 3105 || i== 3106 ){
+        //if( i==3105 ){
+        //    std::cerr<<"snp_depth:"<<std::to_string(snp_dp)<<",snp_rate:"<<std::to_string(snp_rate)<<std::endl;
+        //    std::cerr<<"indel_depth:"<<std::to_string(indel_dp)<<",indel_rate:"<<std::to_string(indel_rate)<<std::endl;
+        //    std::cerr<<"snp1_depth:"<<std::to_string(snp1_dp)<<",snp1_rate:"<<std::to_string(snp1_rate)<<std::endl;
+        //    std::cerr<<"min_site_dp:"<<std::to_string(_opts->min_site_dp)<<std::endl;
+        //}
+        //if( i == 3106 ){ // pos: 3107
         //    print_novar_buffer(i);
-        if( i == 3106 ){ // pos: 3107
-            print_novar_buffer(i);
-        }else if( snp_dp > 100 && snp_rate >0.0 && snp_rate > indel_rate ){
+        //}else
+        if( snp_dp > _opts->min_site_dp && snp_dp >= indel_dp && snp_rate >0.0 && snp_rate >= indel_rate ){
+        //}else if( snp_rate >0.0 && snp_rate > indel_rate ){
+            if(i==3105 ) std::cerr<<"-------------------------------\n";
             var_flag = print_snp_buffer(i, _events->_read_pos[i]);
             if( !var_flag ) print_novar_buffer(i);
-        }else if( indel_dp > 100 && indel_rate >0.0 && indel_rate > snp_rate ){
-            if( snp1_dp >100 && snp1_rate > indel_rate ){
+        }else if( indel_dp > _opts->min_site_dp && indel_dp >= snp_dp && indel_rate >0.0 && indel_rate >= snp_rate ){
+        //}else if( indel_rate >0.0 && indel_rate > snp_rate ){
+            if( snp1_dp > _opts->min_site_dp && snp1_dp >= indel_dp && snp1_rate >= indel_rate ){
+            //if( snp1_rate > indel_rate ){
+                //if(i==3105) std::cerr<<"@@@@@@@@@@@@@@@@@@@@\n";
                 print_novar_buffer(i);
             }else{
                 if( is_del ) var_flag = print_indel_buffer(i+1,_events->_read_pos[i+1]);
                 else  var_flag = print_indel_buffer(i+1,_events->_read_pos[i]);
                 if( !var_flag ) print_novar_buffer(i);
+                //if( i==3105 ){
+                //    if( var_flag ) std::cerr<<"==============================\n";
+                //    else std::cerr<<"***********************************\n";
+                //}
             }
         }else{
+            //if(i==3105) std::cerr<<"%%%%%%%%%%%%%%%%%%%%%%%%%%\n";
             print_novar_buffer(i);
         }
 
